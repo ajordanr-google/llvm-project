@@ -284,7 +284,7 @@ static void rewriteInputConstraintReferences(unsigned FirstIn,
       Pos = DigitEnd;
     }
   }
-  AsmString = std::move(OS.str());
+  AsmString = std::move(Buf);
 }
 
 /// Add output constraints for EAX:EDX because they are return registers.
@@ -881,8 +881,8 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty, CCState &State,
 
   if (isPromotableIntegerTypeForABI(Ty)) {
     if (InReg)
-      return ABIArgInfo::getExtendInReg(Ty);
-    return ABIArgInfo::getExtend(Ty);
+      return ABIArgInfo::getExtendInReg(Ty, CGT.ConvertType(Ty));
+    return ABIArgInfo::getExtend(Ty, CGT.ConvertType(Ty));
   }
 
   if (const auto *EIT = Ty->getAs<BitIntType>()) {
@@ -1332,6 +1332,15 @@ class X86_64ABIInfo : public ABIInfo {
 
     const llvm::Triple &T = getTarget().getTriple();
     return T.isOSLinux() || T.isOSNetBSD();
+  }
+
+  bool returnCXXRecordGreaterThan128InMem() const {
+    // Clang <= 20.0 did not do this.
+    if (getContext().getLangOpts().getClangABICompat() <=
+        LangOptions::ClangABI::Ver20)
+      return false;
+
+    return true;
   }
 
   X86AVXABILevel AVXLevel;
@@ -2067,6 +2076,13 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase, Class &Lo,
         classify(I.getType(), Offset, FieldLo, FieldHi, isNamedArg);
         Lo = merge(Lo, FieldLo);
         Hi = merge(Hi, FieldHi);
+        if (returnCXXRecordGreaterThan128InMem() &&
+            (Size > 128 && (Size != getContext().getTypeSize(I.getType()) ||
+                            Size > getNativeVectorSizeForAVXABI(AVXLevel)))) {
+          // The only case a 256(or 512)-bit wide vector could be used to return
+          // is when CXX record contains a single 256(or 512)-bit element.
+          Lo = Memory;
+        }
         if (Lo == Memory || Hi == Memory) {
           postMerge(Size, Lo, Hi);
           return;
@@ -2130,7 +2146,7 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase, Class &Lo,
       if (BitField) {
         assert(!i->isUnnamedBitField());
         uint64_t Offset = OffsetBase + Layout.getFieldOffset(idx);
-        uint64_t Size = i->getBitWidthValue(getContext());
+        uint64_t Size = i->getBitWidthValue();
 
         uint64_t EB_Lo = Offset / 64;
         uint64_t EB_Hi = (Offset + Size - 1) / 64;
@@ -2756,7 +2772,7 @@ X86_64ABIInfo::classifyArgumentType(QualType Ty, unsigned freeIntRegs,
 
       if (Ty->isIntegralOrEnumerationType() &&
           isPromotableIntegerTypeForABI(Ty))
-        return ABIArgInfo::getExtend(Ty);
+        return ABIArgInfo::getExtend(Ty, CGT.ConvertType(Ty));
     }
 
     break;

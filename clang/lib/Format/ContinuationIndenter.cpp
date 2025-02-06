@@ -148,6 +148,7 @@ static bool startsNextOperand(const FormatToken &Current) {
 static bool mustBreakBinaryOperation(const FormatToken &Current,
                                      const FormatStyle &Style) {
   return Style.BreakBinaryOperations != FormatStyle::BBO_Never &&
+         Current.CanBreakBefore &&
          (Style.BreakBeforeBinaryOperators == FormatStyle::BOS_None
               ? startsNextOperand
               : isAlignableBinaryOperator)(Current);
@@ -348,6 +349,23 @@ bool ContinuationIndenter::canBreak(const LineState &State) {
     }
   }
 
+  // Don't allow breaking before a closing brace of a block-indented braced list
+  // initializer if there isn't already a break.
+  if (Current.is(tok::r_brace) && Current.MatchingParen &&
+      Current.isBlockIndentedInitRBrace(Style)) {
+    return CurrentState.BreakBeforeClosingBrace;
+  }
+
+  // Allow breaking before the right parens with block indentation if there was
+  // a break after the left parens, which is tracked by BreakBeforeClosingParen.
+  if (Style.AlignAfterOpenBracket == FormatStyle::BAS_BlockIndent &&
+      Current.is(tok::r_paren)) {
+    return CurrentState.BreakBeforeClosingParen;
+  }
+
+  if (Style.BreakBeforeTemplateCloser && Current.is(TT_TemplateCloser))
+    return CurrentState.BreakBeforeClosingAngle;
+
   // If binary operators are moved to the next line (including commas for some
   // styles of constructor initializers), that's always ok.
   if (!Current.isOneOf(TT_BinaryOperator, tok::comma) &&
@@ -398,6 +416,8 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
     return true;
   }
   if (CurrentState.BreakBeforeClosingParen && Current.is(tok::r_paren))
+    return true;
+  if (CurrentState.BreakBeforeClosingAngle && Current.is(TT_TemplateCloser))
     return true;
   if (Style.Language == FormatStyle::LK_ObjC &&
       Style.ObjCBreakBeforeNestedBlockParam &&
@@ -454,9 +474,8 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
            getColumnLimit(State) ||
        CurrentState.BreakBeforeParameter) &&
       (!Current.isTrailingComment() || Current.NewlinesBefore > 0) &&
-      (Style.AllowShortFunctionsOnASingleLine != FormatStyle::SFS_All ||
-       Style.BreakConstructorInitializers != FormatStyle::BCIS_BeforeColon ||
-       Style.ColumnLimit != 0)) {
+      (Style.BreakConstructorInitializers != FormatStyle::BCIS_BeforeColon ||
+       Style.ColumnLimit > 0 || Current.NewlinesBefore > 0)) {
     return true;
   }
 
@@ -686,17 +705,14 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
 
   bool DisallowLineBreaksOnThisLine =
       Style.LambdaBodyIndentation == FormatStyle::LBI_Signature &&
-      Style.isCpp() && [&Current] {
-        // Deal with lambda arguments in C++. The aim here is to ensure that we
-        // don't over-indent lambda function bodies when lambdas are passed as
-        // arguments to function calls. We do this by ensuring that either all
-        // arguments (including any lambdas) go on the same line as the function
-        // call, or we break before the first argument.
-        const auto *Prev = Current.Previous;
-        if (!Prev)
-          return false;
+      // Deal with lambda arguments in C++. The aim here is to ensure that we
+      // don't over-indent lambda function bodies when lambdas are passed as
+      // arguments to function calls. We do this by ensuring that either all
+      // arguments (including any lambdas) go on the same line as the function
+      // call, or we break before the first argument.
+      Style.isCpp() && [&] {
         // For example, `/*Newline=*/false`.
-        if (Prev->is(TT_BlockComment) && Current.SpacesRequiredBefore == 0)
+        if (Previous.is(TT_BlockComment) && Current.SpacesRequiredBefore == 0)
           return false;
         const auto *PrevNonComment = Current.getPreviousNonComment();
         if (!PrevNonComment || PrevNonComment->isNot(tok::l_paren))
@@ -809,25 +825,31 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
     if (Tok.Previous->isIf())
       return Style.AlignAfterOpenBracket == FormatStyle::BAS_AlwaysBreak;
     return !Tok.Previous->isOneOf(TT_CastRParen, tok::kw_for, tok::kw_while,
-                                  tok::kw_switch);
+                                  tok::kw_switch) &&
+           !(Style.isJavaScript() && Tok.Previous->is(Keywords.kw_await));
   };
   auto IsFunctionCallParen = [](const FormatToken &Tok) {
     return Tok.is(tok::l_paren) && Tok.ParameterCount > 0 && Tok.Previous &&
            Tok.Previous->is(tok::identifier);
   };
-  const auto IsInTemplateString = [this](const FormatToken &Tok) {
+  auto IsInTemplateString = [this](const FormatToken &Tok) {
     if (!Style.isJavaScript())
       return false;
     for (const auto *Prev = &Tok; Prev; Prev = Prev->Previous) {
       if (Prev->is(TT_TemplateString) && Prev->opensScope())
         return true;
-      if (Prev->is(TT_TemplateString) && Prev->closesScope())
+      if (Prev->opensScope() ||
+          (Prev->is(TT_TemplateString) && Prev->closesScope())) {
         break;
+      }
     }
     return false;
   };
   // Identifies simple (no expression) one-argument function calls.
-  const auto IsSimpleFunction = [&](const FormatToken &Tok) {
+  auto StartsSimpleOneArgList = [&](const FormatToken &TokAfterLParen) {
+    assert(TokAfterLParen.isNot(tok::comment) || TokAfterLParen.Next);
+    const auto &Tok =
+        TokAfterLParen.is(tok::comment) ? *TokAfterLParen.Next : TokAfterLParen;
     if (!Tok.FakeLParens.empty() && Tok.FakeLParens.back() > prec::Unknown)
       return false;
     // Nested calls that involve `new` expressions also look like simple
@@ -836,6 +858,11 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
     // - foo(::new Bar())
     if (Tok.is(tok::kw_new) || Tok.startsSequence(tok::coloncolon, tok::kw_new))
       return true;
+    if (Tok.is(TT_UnaryOperator) ||
+        (Style.isJavaScript() &&
+         Tok.isOneOf(tok::ellipsis, Keywords.kw_await))) {
+      return true;
+    }
     const auto *Previous = Tok.Previous;
     if (!Previous || (!Previous->isOneOf(TT_FunctionDeclarationLParen,
                                          TT_LambdaDefinitionLParen) &&
@@ -861,7 +888,7 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
       //  or
       //  caaaaaaaaaaaaaaaaaaaaal(
       //       new SomethingElseeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee());
-      !IsSimpleFunction(Current)) {
+      !StartsSimpleOneArgList(Current)) {
     CurrentState.NoLineBreak = true;
   }
 
@@ -894,10 +921,8 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
     CurrentState.ContainsUnwrappedBuilder = true;
   }
 
-  if (Current.is(TT_TrailingReturnArrow) &&
-      Style.Language == FormatStyle::LK_Java) {
+  if (Current.is(TT_LambdaArrow) && Style.Language == FormatStyle::LK_Java)
     CurrentState.NoLineBreak = true;
-  }
   if (Current.isMemberAccess() && Previous.is(tok::r_paren) &&
       (Previous.MatchingParen &&
        (Previous.TotalLength - Previous.MatchingParen->TotalLength > 10))) {
@@ -1052,7 +1077,7 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
   //
   // is common and should be formatted like a free-standing function. The same
   // goes for wrapping before the lambda return type arrow.
-  if (Current.isNot(TT_TrailingReturnArrow) &&
+  if (Current.isNot(TT_LambdaArrow) &&
       (!Style.isJavaScript() || Current.NestingLevel != 0 ||
        !PreviousNonComment || PreviousNonComment->isNot(tok::equal) ||
        !Current.isOneOf(Keywords.kw_async, Keywords.kw_function))) {
@@ -1223,6 +1248,9 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
         Style.AlignAfterOpenBracket == FormatStyle::BAS_BlockIndent;
   }
 
+  if (PreviousNonComment && PreviousNonComment->is(TT_TemplateOpener))
+    CurrentState.BreakBeforeClosingAngle = Style.BreakBeforeTemplateCloser;
+
   if (CurrentState.AvoidBinPacking) {
     // If we are breaking after '(', '{', '<', or this is the break after a ':'
     // to start a member initializer list in a constructor, this should not
@@ -1312,7 +1340,7 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
     }
     return CurrentState.Indent;
   }
-  if (Current.is(TT_TrailingReturnArrow) &&
+  if (Current.is(TT_LambdaArrow) &&
       Previous.isOneOf(tok::kw_noexcept, tok::kw_mutable, tok::kw_constexpr,
                        tok::kw_consteval, tok::kw_static, TT_AttributeSquare)) {
     return ContinuationIndent;
@@ -1356,6 +1384,10 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
       (Current.is(tok::r_paren) ||
        (Current.is(tok::r_brace) && Current.MatchingParen &&
         Current.MatchingParen->is(BK_BracedInit))) &&
+      State.Stack.size() > 1) {
+    return State.Stack[State.Stack.size() - 2].LastSpace;
+  }
+  if (Style.BreakBeforeTemplateCloser && Current.is(TT_TemplateCloser) &&
       State.Stack.size() > 1) {
     return State.Stack[State.Stack.size() - 2].LastSpace;
   }
@@ -1646,7 +1678,7 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   }
   if (Current.isOneOf(TT_BinaryOperator, TT_ConditionalExpr) && Newline)
     CurrentState.NestedBlockIndent = State.Column + Current.ColumnWidth + 1;
-  if (Current.isOneOf(TT_LambdaLSquare, TT_TrailingReturnArrow))
+  if (Current.isOneOf(TT_LambdaLSquare, TT_LambdaArrow))
     CurrentState.LastSpace = State.Column;
   if (Current.is(TT_RequiresExpression) &&
       Style.RequiresExpressionIndentation == FormatStyle::REI_Keyword) {
@@ -2457,7 +2489,7 @@ ContinuationIndenter::createBreakableToken(const FormatToken &Current,
           State.Line->InPPDirective, Encoding, Style);
     }
   } else if (Current.is(TT_BlockComment)) {
-    if (!Style.ReflowComments ||
+    if (Style.ReflowComments == FormatStyle::RCS_Never ||
         // If a comment token switches formatting, like
         // /* clang-format on */, we don't want to break it further,
         // but we may still want to adjust its indentation.
@@ -2478,7 +2510,7 @@ ContinuationIndenter::createBreakableToken(const FormatToken &Current,
       }
       return true;
     }();
-    if (!Style.ReflowComments ||
+    if (Style.ReflowComments == FormatStyle::RCS_Never ||
         CommentPragmasRegex.match(Current.TokenText.substr(2)) ||
         switchesFormatting(Current) || !RegularComments) {
       return nullptr;

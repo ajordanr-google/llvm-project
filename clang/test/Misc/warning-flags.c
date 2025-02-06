@@ -18,7 +18,7 @@ This test serves two purposes:
 
 The list of warnings below should NEVER grow.  It should gradually shrink to 0.
 
-CHECK: Warnings without flags (63):
+CHECK: Warnings without flags (59):
 
 CHECK-NEXT:   ext_expected_semi_decl_list
 CHECK-NEXT:   ext_missing_whitespace_after_macro_name
@@ -32,7 +32,6 @@ CHECK-NEXT:   pp_invalid_string_literal
 CHECK-NEXT:   pp_out_of_date_dependency
 CHECK-NEXT:   pp_poisoning_existing_macro
 CHECK-NEXT:   warn_accessor_property_type_mismatch
-CHECK-NEXT:   warn_arcmt_nsalloc_realloc
 CHECK-NEXT:   warn_asm_label_on_auto_decl
 CHECK-NEXT:   warn_c_kext
 CHECK-NEXT:   warn_call_wrong_number_of_arguments
@@ -46,7 +45,6 @@ CHECK-NEXT:   warn_drv_amdgpu_cov6
 CHECK-NEXT:   warn_drv_assuming_mfloat_abi_is
 CHECK-NEXT:   warn_drv_clang_unsupported
 CHECK-NEXT:   warn_drv_pch_not_first_include
-CHECK-NEXT:   warn_enum_value_overflow
 CHECK-NEXT:   warn_expected_qualified_after_typename
 CHECK-NEXT:   warn_fe_backend_unsupported
 CHECK-NEXT:   warn_fe_cc_log_diagnostics_failure
@@ -61,7 +59,6 @@ CHECK-NEXT:   warn_method_param_redefinition
 CHECK-NEXT:   warn_missing_case_for_condition
 CHECK-NEXT:   warn_missing_dependent_template_keyword
 CHECK-NEXT:   warn_missing_whitespace_after_macro_name
-CHECK-NEXT:   warn_mt_message
 CHECK-NEXT:   warn_no_constructor_for_refconst
 CHECK-NEXT:   warn_not_compound_assign
 CHECK-NEXT:   warn_objc_property_copy_missing_on_block
@@ -77,7 +74,6 @@ CHECK-NEXT:   warn_register_objc_catch_parm
 CHECK-NEXT:   warn_related_result_type_compatibility_class
 CHECK-NEXT:   warn_related_result_type_compatibility_protocol
 CHECK-NEXT:   warn_template_export_unsupported
-CHECK-NEXT:   warn_typecheck_function_qualifiers
 CHECK-NEXT:   warn_undef_interface
 CHECK-NEXT:   warn_undef_interface_suggest
 CHECK-NEXT:   warn_undef_protocolref
@@ -86,4 +82,4 @@ CHECK-NEXT:   warn_weak_import
 
 The list of warnings in -Wpedantic should NEVER grow.
 
-CHECK: Number in -Wpedantic (not covered by other -W flags): 25
+CHECK: Number in -Wpedantic (not covered by other -W flags): 24

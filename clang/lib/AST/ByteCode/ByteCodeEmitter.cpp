@@ -15,22 +15,10 @@
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
-#include "clang/Basic/Builtins.h"
 #include <type_traits>
 
 using namespace clang;
 using namespace clang::interp;
-
-/// Unevaluated builtins don't get their arguments put on the stack
-/// automatically. They instead operate on the AST of their Call
-/// Expression.
-/// Similar information is available via ASTContext::BuiltinInfo,
-/// but that is not correct for our use cases.
-static bool isUnevaluatedBuiltin(unsigned BuiltinID) {
-  return BuiltinID == Builtin::BI__builtin_classify_type ||
-         BuiltinID == Builtin::BI__builtin_os_log_format_buffer_size ||
-         BuiltinID == Builtin::BI__builtin_constant_p;
-}
 
 Function *ByteCodeEmitter::compileFunc(const FunctionDecl *FuncDecl) {
 
@@ -147,14 +135,9 @@ Function *ByteCodeEmitter::compileFunc(const FunctionDecl *FuncDecl) {
   // Create a handle over the emitted code.
   Function *Func = P.getFunction(FuncDecl);
   if (!Func) {
-    bool IsUnevaluatedBuiltin = false;
-    if (unsigned BI = FuncDecl->getBuiltinID())
-      IsUnevaluatedBuiltin = isUnevaluatedBuiltin(BI);
-
-    Func =
-        P.createFunction(FuncDecl, ParamOffset, std::move(ParamTypes),
-                         std::move(ParamDescriptors), std::move(ParamOffsets),
-                         HasThisPointer, HasRVO, IsUnevaluatedBuiltin);
+    Func = P.createFunction(FuncDecl, ParamOffset, std::move(ParamTypes),
+                            std::move(ParamDescriptors),
+                            std::move(ParamOffsets), HasThisPointer, HasRVO);
   }
 
   assert(Func);
@@ -227,8 +210,7 @@ Function *ByteCodeEmitter::compileObjCBlock(const BlockExpr *BE) {
   Function *Func =
       P.createFunction(BE, ParamOffset, std::move(ParamTypes),
                        std::move(ParamDescriptors), std::move(ParamOffsets),
-                       /*HasThisPointer=*/false, /*HasRVO=*/false,
-                       /*IsUnevaluatedBuiltin=*/false);
+                       /*HasThisPointer=*/false, /*HasRVO=*/false);
 
   assert(Func);
   Func->setDefined(true);
@@ -343,6 +325,12 @@ void emit(Program &P, std::vector<std::byte> &Code,
 
 template <>
 void emit(Program &P, std::vector<std::byte> &Code, const IntegralAP<true> &Val,
+          bool &Success) {
+  emitSerialized(Code, Val, Success);
+}
+
+template <>
+void emit(Program &P, std::vector<std::byte> &Code, const FixedPoint &Val,
           bool &Success) {
   emitSerialized(Code, Val, Success);
 }

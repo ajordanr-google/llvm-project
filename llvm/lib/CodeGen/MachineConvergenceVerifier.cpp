@@ -8,7 +8,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/MachineConvergenceVerifier.h"
-#include "llvm/CodeGen/GlobalISel/GenericMachineInstrs.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/MachineSSAContext.h"
@@ -51,7 +50,9 @@ GenericConvergenceVerifier<MachineSSAContext>::findAndCheckConvergenceTokenUsed(
   const MachineRegisterInfo &MRI = Context.getFunction()->getRegInfo();
   const MachineInstr *TokenDef = nullptr;
 
-  for (const MachineOperand &MO : MI.all_uses()) {
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || !MO.isUse())
+      continue;
     Register OpReg = MO.getReg();
     if (!OpReg.isVirtual())
       continue;

@@ -86,7 +86,7 @@ namespace DefaultInit {
 
 #if __cplusplus >= 202002L
 namespace SimpleActivate {
-  constexpr int foo() { // ref-error {{never produces a constant expression}}
+  constexpr int foo() { // both-error {{never produces a constant expression}}
     union {
       int a;
       int b;
@@ -94,8 +94,7 @@ namespace SimpleActivate {
 
     Z.a = 10;
     Z.b = 20;
-    return Z.a; // both-note {{read of member 'a' of union with active member 'b'}} \
-                // ref-note {{read of member 'a' of union with active member 'b}}
+    return Z.a; // both-note 2{{read of member 'a' of union with active member 'b'}}
   }
   static_assert(foo() == 20); // both-error {{not an integral constant expression}} \
                               // both-note {{in call to}}
@@ -212,11 +211,10 @@ namespace Nested {
     int y;
   };
 
- constexpr int foo() { // ref-error {{constexpr function never produces a constant expression}}
+ constexpr int foo() { // both-error {{constexpr function never produces a constant expression}}
     U2 u;
     u.u.a = 10;
-    int a = u.y; // both-note {{read of member 'y' of union with active member 'u' is not allowed in a constant expression}} \
-                 // ref-note {{read of member 'y' of union with active member 'u' is not allowed in a constant expression}}
+    int a = u.y; // both-note 2{{read of member 'y' of union with active member 'u' is not allowed in a constant expression}}
 
     return 1;
   }
@@ -230,24 +228,22 @@ namespace Nested {
   }
   static_assert(foo2() == 10);
 
- constexpr int foo3() { // ref-error {{constexpr function never produces a constant expression}}
+ constexpr int foo3() { // both-error {{constexpr function never produces a constant expression}}
     U2 u;
     u.u.a = 10;
-    int a = u.u.b; // both-note {{read of member 'b' of union with active member 'a' is not allowed in a constant expression}} \
-                   // ref-note {{read of member 'b' of union with active member 'a' is not allowed in a constant expression}}
+    int a = u.u.b; // both-note 2{{read of member 'b' of union with active member 'a' is not allowed in a constant expression}}
 
     return 1;
   }
   static_assert(foo3() == 1); // both-error {{not an integral constant expression}} \
                               // both-note {{in call to}}
 
-  constexpr int foo4() { // ref-error {{constexpr function never produces a constant expression}}
+  constexpr int foo4() { // both-error {{constexpr function never produces a constant expression}}
     U2 u;
 
     u.x = 10;
 
-    return u.u.a;// both-note {{read of member 'u' of union with active member 'x' is not allowed in a constant expression}} \
-                 // ref-note {{read of member 'u' of union with active member 'x' is not allowed in a constant expression}}
+    return u.u.a; // both-note 2{{read of member 'u' of union with active member 'x' is not allowed in a constant expression}}
   }
   static_assert(foo4() == 1); // both-error {{not an integral constant expression}} \
                               // both-note {{in call to}}
@@ -404,5 +400,89 @@ namespace UnionInBase {
   constexpr B uninit = return_uninit(); // both-error {{constant expression}} \
                                         // both-note {{subobject 'y' is not initialized}}
   static_assert(return_uninit().a.x == 2);
+}
+
+namespace One {
+  struct A { long x; };
+
+  union U;
+  constexpr A foo(U *up);
+  union U {
+    A a = foo(this); // both-note {{in call to 'foo(&u)'}}
+    int y;
+  };
+
+  constexpr A foo(U *up) {
+    return {up->y}; // both-note {{read of member 'y' of union}}
+  }
+
+  constinit U u = {}; // both-error {{constant init}} \
+                      // both-note {{constinit}}
+}
+
+namespace CopyAssign {
+  union A {
+    int a;
+    int b;
+  };
+
+  constexpr int f() {
+    A a{12};
+    A b{13};
+
+    b.b = 32;
+    b = a ;
+    return b.a;
+  }
+  static_assert(f()== 12);
+
+
+  constexpr int f2() {
+    A a{12};
+    A b{13};
+
+    b.b = 32;
+    b = a ;
+    return b.b; // both-note {{read of member 'b' of union with active member 'a'}}
+  }
+  static_assert(f2() == 12); // both-error {{not an integral constant expression}} \
+                             // both-note {{in call to}}
+}
+
+namespace MoveAssign {
+  union A {
+    int a;
+    int b;
+  };
+
+  constexpr int f() {
+    A b{13};
+
+    b = A{12} ;
+    return b.a;
+  }
+  static_assert(f()== 12);
+}
+
+namespace IFD {
+  template <class T>
+  struct Optional {
+    struct {
+      union {
+        char null_state;
+        T val;
+      };
+    };
+    constexpr Optional() : null_state(){}
+  };
+
+  constexpr bool test()
+  {
+    Optional<int> opt{};
+    Optional<int> opt2{};
+    opt = opt2;
+    return true;
+  }
+  static_assert(test());
 }
 #endif
