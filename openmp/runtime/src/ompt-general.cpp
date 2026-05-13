@@ -468,7 +468,7 @@ void ompt_pre_init() {
 #endif
 }
 
-extern "C" int omp_get_initial_device(void);
+#define omp_initial_device -1 /* see omp.h.var */
 
 void ompt_post_init() {
   //--------------------------------------------------
@@ -486,7 +486,7 @@ void ompt_post_init() {
   //--------------------------------------------------
   if (ompt_start_tool_result) {
     ompt_enabled.enabled = !!ompt_start_tool_result->initialize(
-        ompt_fn_lookup, omp_get_initial_device(),
+        ompt_fn_lookup, omp_initial_device,
         &(ompt_start_tool_result->tool_data));
 
     if (!ompt_enabled.enabled) {
@@ -498,6 +498,7 @@ void ompt_post_init() {
     kmp_info_t *root_thread = ompt_get_thread();
 
     ompt_set_thread_state(root_thread, ompt_state_overhead);
+    __ompt_task_init(root_thread->th.th_current_task, 0);
 
     if (ompt_enabled.ompt_callback_thread_begin) {
       ompt_callbacks.ompt_callback(ompt_callback_thread_begin)(
@@ -928,7 +929,8 @@ _OMP_EXTERN void ompt_libomp_connect(ompt_start_tool_result_t *result) {
     // functions can be extracted and assigned to the callbacks in
     // libomptarget
     result->initialize(ompt_libomp_target_fn_lookup,
-                       /* initial_device_num */ 0, /* tool_data */ nullptr);
+                       /* initial_device_num */ omp_initial_device,
+                       /* tool_data */ nullptr);
     // Track the object provided by libomptarget so that the finalizer can be
     // called during OMPT finalization
     libomptarget_ompt_result = result;

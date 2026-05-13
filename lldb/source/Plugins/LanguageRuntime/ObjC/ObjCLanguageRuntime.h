@@ -67,7 +67,7 @@ public:
     // for the known v1/v2 this is all that needs to be done
     virtual bool IsKVO() {
       if (m_is_kvo == eLazyBoolCalculate) {
-        const char *class_name = GetClassName().AsCString();
+        const char *class_name = GetClassName().AsCString(nullptr);
         if (class_name && *class_name)
           m_is_kvo =
               (LazyBool)(strstr(class_name, "NSKVONotifying_") == class_name);
@@ -79,7 +79,7 @@ public:
     // for the known v1/v2 this is all that needs to be done
     virtual bool IsCFType() {
       if (m_is_cf == eLazyBoolCalculate) {
-        const char *class_name = GetClassName().AsCString();
+        const char *class_name = GetClassName().AsCString(nullptr);
         if (class_name && *class_name)
           m_is_cf = (LazyBool)(strcmp(class_name, "__NSCFType") == 0 ||
                                strcmp(class_name, "NSCFType") == 0);
@@ -340,7 +340,7 @@ protected:
 
   bool AddClass(ObjCISA isa, const ClassDescriptorSP &descriptor_sp) {
     if (isa != 0) {
-      m_isa_to_descriptor[isa] = descriptor_sp;
+      m_isa_to_descriptor.insert_or_assign(isa, descriptor_sp);
       return true;
     }
     return false;
@@ -352,7 +352,7 @@ protected:
   bool AddClass(ObjCISA isa, const ClassDescriptorSP &descriptor_sp,
                 uint32_t class_name_hash) {
     if (isa != 0) {
-      m_isa_to_descriptor[isa] = descriptor_sp;
+      m_isa_to_descriptor.insert_or_assign(isa, descriptor_sp);
       m_hash_to_isa_map.insert(std::make_pair(class_name_hash, isa));
       return true;
     }
@@ -386,16 +386,8 @@ private:
     }
 
     bool operator<(const ClassAndSel &rhs) const {
-      if (class_addr < rhs.class_addr)
-        return true;
-      else if (class_addr > rhs.class_addr)
-        return false;
-      else {
-        if (sel_addr < rhs.sel_addr)
-          return true;
-        else
-          return false;
-      }
+      return std::tie(class_addr, sel_addr) <
+             std::tie(rhs.class_addr, rhs.sel_addr);
     }
 
     lldb::addr_t class_addr = LLDB_INVALID_ADDRESS;
@@ -427,7 +419,7 @@ private:
 
   typedef std::map<ClassAndSel, lldb::addr_t> MsgImplMap;
   typedef std::map<ClassAndSelStr, lldb::addr_t> MsgImplStrMap;
-  typedef std::map<ObjCISA, ClassDescriptorSP> ISAToDescriptorMap;
+  typedef llvm::DenseMap<ObjCISA, ClassDescriptorSP> ISAToDescriptorMap;
   typedef std::multimap<uint32_t, ObjCISA> HashToISAMap;
   typedef ISAToDescriptorMap::iterator ISAToDescriptorIterator;
   typedef HashToISAMap::iterator HashToISAIterator;
@@ -473,6 +465,10 @@ protected:
 
   ObjCLanguageRuntime(const ObjCLanguageRuntime &) = delete;
   const ObjCLanguageRuntime &operator=(const ObjCLanguageRuntime &) = delete;
+
+private:
+  CompilerType LookupInRuntime(ConstString class_name);
+  CompilerType LookupInModulesVendor(ConstString class_name, Target &process);
 };
 
 } // namespace lldb_private

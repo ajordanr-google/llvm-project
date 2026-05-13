@@ -25,7 +25,6 @@ struct GlobalMergeOptions {
   unsigned MinSize = 0;
   bool GroupByUse = true;
   bool IgnoreSingleUse = true;
-  bool MergeConst = false;
   /// Whether we should merge global variables that have external linkage.
   bool MergeExternal = true;
   /// Whether we should merge constant global variables.
@@ -41,7 +40,7 @@ struct GlobalMergeOptions {
 };
 
 // FIXME: This pass must run before AsmPrinterPass::doInitialization!
-class GlobalMergePass : public PassInfoMixin<GlobalMergePass> {
+class GlobalMergePass : public OptionalPassInfoMixin<GlobalMergePass> {
   const TargetMachine *TM;
   GlobalMergeOptions Options;
 

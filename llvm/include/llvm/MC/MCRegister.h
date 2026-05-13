@@ -27,7 +27,15 @@ using MCPhysReg = uint16_t;
 /// A target with a complicated sub-register structure will typically have many
 /// fewer register units than actual registers. MCRI::getNumRegUnits() returns
 /// the number of register units in the target.
-using MCRegUnit = unsigned;
+enum class MCRegUnit : unsigned;
+
+struct MCRegUnitToIndex {
+  using argument_type = MCRegUnit;
+
+  unsigned operator()(MCRegUnit Unit) const {
+    return static_cast<unsigned>(Unit);
+  }
+};
 
 /// Wrapper class representing physical registers. Should be passed by value.
 class MCRegister {
@@ -51,13 +59,12 @@ public:
                 "Reg isn't large enough to hold full range.");
   static constexpr unsigned NoRegister = 0u;
   static constexpr unsigned FirstPhysicalReg = 1u;
-  static constexpr unsigned FirstStackSlot = 1u << 30;
-  static constexpr unsigned VirtualRegFlag = 1u << 31;
+  static constexpr unsigned LastPhysicalReg = (1u << 30) - 1;
 
   /// Return true if the specified register number is in
   /// the physical register namespace.
   static constexpr bool isPhysicalRegister(unsigned Reg) {
-    return FirstPhysicalReg <= Reg && Reg < FirstStackSlot;
+    return FirstPhysicalReg <= Reg && Reg <= LastPhysicalReg;
   }
 
   /// Return true if the specified register number is in the physical register

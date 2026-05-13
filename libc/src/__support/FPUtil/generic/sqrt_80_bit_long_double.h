@@ -24,7 +24,7 @@ namespace x86 {
 LIBC_INLINE void normalize(int &exponent,
                            FPBits<long double>::StorageType &mantissa) {
   const unsigned int shift = static_cast<unsigned int>(
-      cpp::countl_zero(static_cast<uint64_t>(mantissa)) -
+      static_cast<size_t>(cpp::countl_zero(static_cast<uint64_t>(mantissa))) -
       (8 * sizeof(uint64_t) - 1 - FPBits<long double>::FRACTION_LEN));
   exponent -= shift;
   mantissa <<= shift;
@@ -41,7 +41,7 @@ LIBC_INLINE long double sqrt(long double x) {
   using LDBits = FPBits<long double>;
   using StorageType = typename LDBits::StorageType;
   constexpr StorageType ONE = StorageType(1) << int(LDBits::FRACTION_LEN);
-  constexpr auto LDNAN = LDBits::quiet_nan().get_val();
+  LIBC_CONSTEXPR auto LDNAN = LDBits::quiet_nan().get_val();
 
   LDBits bits(x);
 

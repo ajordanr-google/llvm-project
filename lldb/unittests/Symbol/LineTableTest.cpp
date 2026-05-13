@@ -58,7 +58,7 @@ private:
   uint32_t CalculateAbilities() override { return UINT32_MAX; }
   uint32_t GetNumCompileUnits() override { return 1; }
   CompUnitSP GetCompileUnitAtIndex(uint32_t) override { return m_cu_sp; }
-  Symtab *GetSymtab() override { return nullptr; }
+  Symtab *GetSymtab(bool can_create = true) override { return nullptr; }
   LanguageType ParseLanguage(CompileUnit &) override { return eLanguageTypeC; }
   size_t ParseFunctions(CompileUnit &) override { return 0; }
   bool ParseLineTable(CompileUnit &) override { return true; }
@@ -129,26 +129,21 @@ class LineTableTest : public testing::Test {
 
 class LineSequenceBuilder {
 public:
-  std::vector<std::unique_ptr<LineSequence>> Build() {
-    return std::move(m_sequences);
-  }
+  std::vector<LineTable::Sequence> Build() { return std::move(m_sequences); }
   enum Terminal : bool { Terminal = true };
   void Entry(addr_t addr, bool terminal = false) {
     LineTable::AppendLineEntryToSequence(
-        m_seq_up.get(), addr, /*line=*/1, /*column=*/0,
+        m_sequence, addr, /*line=*/1, /*column=*/0,
         /*file_idx=*/0,
         /*is_start_of_statement=*/false, /*is_start_of_basic_block=*/false,
         /*is_prologue_end=*/false, /*is_epilogue_begin=*/false, terminal);
-    if (terminal) {
-      m_sequences.push_back(std::move(m_seq_up));
-      m_seq_up = LineTable::CreateLineSequenceContainer();
-    }
+    if (terminal)
+      m_sequences.push_back(std::move(m_sequence));
   }
 
 private:
-  std::vector<std::unique_ptr<LineSequence>> m_sequences;
-  std::unique_ptr<LineSequence> m_seq_up =
-      LineTable::CreateLineSequenceContainer();
+  std::vector<LineTable::Sequence> m_sequences;
+  LineTable::Sequence m_sequence;
 };
 
 } // namespace
@@ -156,7 +151,7 @@ private:
 char FakeSymbolFile::ID;
 
 static llvm::Expected<FakeModuleFixture>
-CreateFakeModule(std::vector<std::unique_ptr<LineSequence>> line_sequences) {
+CreateFakeModule(std::vector<LineTable::Sequence> line_sequences) {
   Expected<TestFile> file = TestFile::fromYaml(R"(
 --- !ELF
 FileHeader:
@@ -181,10 +176,12 @@ Sections:
   if (!text_sp)
     return createStringError("No .text");
 
-  auto cu_up = std::make_unique<CompileUnit>(module_sp, /*user_data=*/nullptr,
-                                             /*support_file_sp=*/nullptr,
-                                             /*uid=*/0, eLanguageTypeC,
-                                             /*is_optimized=*/eLazyBoolNo);
+  auto cu_up = std::make_unique<CompileUnit>(
+      module_sp,
+      /*user_data=*/nullptr,
+      /*support_file_nsp=*/std::make_shared<SupportFile>(),
+      /*uid=*/0, eLanguageTypeC,
+      /*is_optimized=*/eLazyBoolNo);
   LineTable *line_table = new LineTable(cu_up.get(), std::move(line_sequences));
   cu_up->SetLineTable(line_table);
   cast<FakeSymbolFile>(module_sp->GetSymbolFile())
@@ -194,7 +191,7 @@ Sections:
                            std::move(text_sp), line_table};
 }
 
-TEST_F(LineTableTest, LowerAndUpperBound) {
+TEST_F(LineTableTest, lower_bound) {
   LineSequenceBuilder builder;
   builder.Entry(0);
   builder.Entry(10);
@@ -211,41 +208,63 @@ TEST_F(LineTableTest, LowerAndUpperBound) {
 
   auto make_addr = [&](addr_t addr) { return Address(fixture->text_sp, addr); };
 
-  // Both functions return the same value for boundary values. This way the
-  // index range for e.g. [0,10) is [0,1).
   EXPECT_EQ(table->lower_bound(make_addr(0)), 0u);
-  EXPECT_EQ(table->upper_bound(make_addr(0)), 0u);
-  EXPECT_EQ(table->lower_bound(make_addr(10)), 1u);
-  EXPECT_EQ(table->upper_bound(make_addr(10)), 1u);
-  EXPECT_EQ(table->lower_bound(make_addr(20)), 3u);
-  EXPECT_EQ(table->upper_bound(make_addr(20)), 3u);
-
-  // In case there's no "real" entry at this address, they return the first real
-  // entry.
-  EXPECT_EQ(table->lower_bound(make_addr(30)), 5u);
-  EXPECT_EQ(table->upper_bound(make_addr(30)), 5u);
-
-  EXPECT_EQ(table->lower_bound(make_addr(40)), 5u);
-  EXPECT_EQ(table->upper_bound(make_addr(40)), 5u);
-
-  // For in-between values, their result differs by one. [9,19) maps to [0,2)
-  // because the first two entries contain a part of that range.
   EXPECT_EQ(table->lower_bound(make_addr(9)), 0u);
-  EXPECT_EQ(table->upper_bound(make_addr(9)), 1u);
+  EXPECT_EQ(table->lower_bound(make_addr(10)), 1u);
   EXPECT_EQ(table->lower_bound(make_addr(19)), 1u);
-  EXPECT_EQ(table->upper_bound(make_addr(19)), 2u);
+
+  // Skips over the terminal entry.
+  EXPECT_EQ(table->lower_bound(make_addr(20)), 3u);
   EXPECT_EQ(table->lower_bound(make_addr(29)), 3u);
-  EXPECT_EQ(table->upper_bound(make_addr(29)), 4u);
 
-  // In a gap, they both return the first entry after the gap.
-  EXPECT_EQ(table->upper_bound(make_addr(39)), 5u);
-  EXPECT_EQ(table->upper_bound(make_addr(39)), 5u);
+  // In case there's no "real" entry at this address, the function returns the
+  // first real entry.
+  EXPECT_EQ(table->lower_bound(make_addr(30)), 5u);
+  EXPECT_EQ(table->lower_bound(make_addr(40)), 5u);
 
-  // And if there's no such entry, they return the size of the list.
+  // In a gap, return the first entry after the gap.
+  EXPECT_EQ(table->lower_bound(make_addr(39)), 5u);
+
+  // And if there's no such entry, return the size of the list.
   EXPECT_EQ(table->lower_bound(make_addr(50)), table->GetSize());
-  EXPECT_EQ(table->upper_bound(make_addr(50)), table->GetSize());
   EXPECT_EQ(table->lower_bound(make_addr(59)), table->GetSize());
-  EXPECT_EQ(table->upper_bound(make_addr(59)), table->GetSize());
+}
+
+TEST_F(LineTableTest, GetLineEntryIndexRange) {
+  LineSequenceBuilder builder;
+  builder.Entry(0);
+  builder.Entry(10);
+  builder.Entry(20, LineSequenceBuilder::Terminal);
+
+  llvm::Expected<FakeModuleFixture> fixture = CreateFakeModule(builder.Build());
+  ASSERT_THAT_EXPECTED(fixture, llvm::Succeeded());
+
+  LineTable *table = fixture->line_table;
+
+  auto make_range = [&](addr_t addr, addr_t size) {
+    return AddressRange(fixture->text_sp, addr, size);
+  };
+
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(0, 10)),
+              testing::Pair(0, 1));
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(0, 20)),
+              testing::Pair(0, 3)); // Includes the terminal entry.
+  // Partial overlap on one side.
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(3, 7)),
+              testing::Pair(0, 1));
+  // On the other side
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(0, 15)),
+              testing::Pair(0, 2));
+  // On both sides
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(2, 3)),
+              testing::Pair(0, 1));
+  // Empty ranges
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(0, 0)),
+              testing::Pair(0, 0));
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(5, 0)),
+              testing::Pair(0, 0));
+  EXPECT_THAT(table->GetLineEntryIndexRange(make_range(10, 0)),
+              testing::Pair(1, 1));
 }
 
 TEST_F(LineTableTest, FindLineEntryByAddress) {

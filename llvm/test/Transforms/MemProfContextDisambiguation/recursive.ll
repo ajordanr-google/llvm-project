@@ -47,7 +47,7 @@
 ; RUN:	-memprof-allow-recursive-callsites=true \
 ; RUN:	-memprof-clone-recursive-contexts=false \
 ; RUN:  %s -S 2>&1 | FileCheck %s \
-; RUN:  --implicit-check-not "memprof_recursive.cc:12:10: call in clone _Z1Ci.memprof.1 assigned" \
+; RUN:  --implicit-check-not "memprof_recursive.cc:12:10: call in clone _Z1Ci.memprof.1 assigned to call function clone _Z1Bi.memprof" \
 ; RUN:  --check-prefix=ALL --check-prefix=ALLOW-RECUR-CALLSITES --check-prefix=ALLOW-RECUR-CONTEXTS
 
 ;; Skipping recursive callsites should result in no cloning.
@@ -56,7 +56,7 @@
 ; RUN:  -pass-remarks=memprof-context-disambiguation \
 ; RUN:	-memprof-allow-recursive-callsites=false \
 ; RUN:  %s -S 2>&1 | FileCheck %s \
-; RUN:  --implicit-check-not "memprof_recursive.cc:12:10: call in clone _Z1Ci.memprof.1 assigned" \
+; RUN:  --implicit-check-not "memprof_recursive.cc:12:10: call in clone _Z1Ci.memprof.1 assigned to call function clone _Z1Bi.memprof" \
 ; RUN:  --implicit-check-not="created clone" \
 ; RUN:	--implicit-check-not="marked with memprof allocation attribute cold" \
 ; RUN:  --check-prefix=ALL
@@ -64,10 +64,18 @@
 ;; Check the default behavior (clone recursive callsites).
 ; RUN: opt -passes=memprof-context-disambiguation -supports-hot-cold-new \
 ; RUN:  -memprof-verify-ccg -memprof-verify-nodes -stats \
+; RUN:  -memprof-export-to-dot -memprof-dot-file-path-prefix=%t. \
 ; RUN:  -pass-remarks=memprof-context-disambiguation \
 ; RUN:  %s -S 2>&1 | FileCheck %s \
 ; RUN:  --check-prefix=ALL --check-prefix=ALLOW-RECUR-CALLSITES --check-prefix=ALLOW-RECUR-CONTEXTS \
 ; RUN:  --check-prefix=CLONE-RECUR-CALLSITES
+
+;; Check that the backedge was correctly detected and emitted to the dot file
+;; as a dotted edge.
+; RUN: cat %t.ccg.postbuild.dot | FileCheck %s --check-prefix=DOT
+; DOT-DAG: Node[[B:0x[a-f0-9]+]] {{.*}}_Z1Bi -\> _Z1Ci
+; DOT-DAG: Node[[C:0x[a-f0-9]+]] {{.*}}_Z1Ci -\> _Z1Bi
+; DOT-DAG: Node[[C]] -> Node[[B]]{{.*}}style="dotted"
 
 ;; Skipping recursive contexts should prevent spurious call to cloned version of
 ;; B from the context starting at memprof_recursive.cc:19:13, which is actually
@@ -79,7 +87,7 @@
 ; RUN:	-memprof-allow-recursive-contexts=false \
 ; RUN:	-memprof-clone-recursive-contexts=false \
 ; RUN:  %s -S 2>&1 | FileCheck %s \
-; RUN:  --implicit-check-not "memprof_recursive.cc:12:10: call in clone _Z1Ci.memprof.1 assigned" \
+; RUN:  --implicit-check-not "memprof_recursive.cc:12:10: call in clone _Z1Ci.memprof.1 assigned to call function clone _Z1Bi.memprof" \
 ; RUN:  --check-prefix=ALL --check-prefix=ALLOW-RECUR-CALLSITES --check-prefix=SKIP-RECUR-CONTEXTS
 
 ; ALLOW-RECUR-CALLSITES: memprof_recursive.cc:4:0: created clone _Z1Dv.memprof.1

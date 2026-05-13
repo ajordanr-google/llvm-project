@@ -40,6 +40,8 @@ enum LineType {
 enum ScopeType {
   // Contained in class declaration/definition.
   ST_Class,
+  // Contained in enum declaration/definition.
+  ST_Enum,
   // Contained in compound requirement.
   ST_CompoundRequirement,
   // Contained in other blocks (function, lambda, loop, if/else, child, etc).
@@ -224,9 +226,7 @@ class TokenAnnotator {
 public:
   TokenAnnotator(const FormatStyle &Style, const AdditionalKeywords &Keywords)
       : Style(Style), IsCpp(Style.isCpp()),
-        LangOpts(getFormattingLangOpts(Style)), Keywords(Keywords) {
-    assert(IsCpp == LangOpts.CXXOperatorNames);
-  }
+        LangOpts(getFormattingLangOpts(Style)), Keywords(Keywords) {}
 
   /// Adapts the indent levels of comment lines to the indent of the
   /// subsequent line.
@@ -249,8 +249,7 @@ private:
   bool spaceRequiredBefore(const AnnotatedLine &Line,
                            const FormatToken &Right) const;
 
-  bool mustBreakBefore(const AnnotatedLine &Line,
-                       const FormatToken &Right) const;
+  bool mustBreakBefore(AnnotatedLine &Line, const FormatToken &Right) const;
 
   bool canBreakBefore(const AnnotatedLine &Line,
                       const FormatToken &Right) const;
